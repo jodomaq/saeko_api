@@ -1,0 +1,39 @@
+# Environment variables / Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Tokens (sensitive)
+tokens.txt
+tokens_refreshed.txt
+
+# Service account JSON files
+service_saeko_api_*.json
+
+# Postman exports
+*.postman_collection.json
+*.postman_environment.json

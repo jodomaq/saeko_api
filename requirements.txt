@@ -1,0 +1,5 @@
+requests
+PyJWT
+cryptography
+python-dotenv
+openpyxl
