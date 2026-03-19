@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/DEV/saekoAuth -maxdepth 1 -name README* -o -name CLAUDE* -o -name .cursorrules -o -name *.md -type f)"
+    ]
+  }
+}
