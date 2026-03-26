@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /d/DEV/saekoAuth -maxdepth 1 -name README* -o -name CLAUDE* -o -name .cursorrules -o -name *.md -type f)"
+      "Bash(find /d/DEV/saekoAuth -maxdepth 1 -name README* -o -name CLAUDE* -o -name .cursorrules -o -name *.md -type f)",
+      "Bash(npx skills:*)",
+      "Bash(ls d:/DEV/saekoAuth/*.py)"
     ]
   }
 }
