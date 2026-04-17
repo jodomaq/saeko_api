@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-17 15-01-20",
+  "timestamp": "2026-04-17 15-38-52",
   "processed_ids": [
     320,
     321,
@@ -21,15 +21,8 @@
     337,
     338,
     339,
-    340,
-    341,
-    342,
-    343,
-    344,
-    345,
-    346,
-    347
+    340
   ],
-  "carga_path": "D:\\DEV\\saekoAuth\\2026_code\\resultado\\carga 2026-04-17 15-01-20.csv",
-  "errores_path": "D:\\DEV\\saekoAuth\\2026_code\\resultado\\errores 2026-04-17 15-01-20.csv"
+  "carga_path": "D:\\DEV\\saekoAuth\\2026_code\\resultado\\carga 2026-04-17 15-38-52.csv",
+  "errores_path": "D:\\DEV\\saekoAuth\\2026_code\\resultado\\errores 2026-04-17 15-38-52.csv"
 }

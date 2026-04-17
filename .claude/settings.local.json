@@ -3,7 +3,11 @@
     "allow": [
       "Bash(find /d/DEV/saekoAuth -maxdepth 1 -name README* -o -name CLAUDE* -o -name .cursorrules -o -name *.md -type f)",
       "Bash(npx skills:*)",
-      "Bash(ls d:/DEV/saekoAuth/*.py)"
+      "Bash(ls d:/DEV/saekoAuth/*.py)",
+      "Bash(.venv/Scripts/python matricula_ecoturismo_colola.py)",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(.venv/Scripts/python descargar_programs.py)",
+      "Bash(.venv/Scripts/pip show *)"
     ]
   }
 }
