@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,9 +25,10 @@ from datetime import date
 
 import requests  # noqa: E402 (después de modificar sys.path)
 from tqdm import tqdm
-from validate_email import validate_email
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+$")
 
 from auth import SERVICE_ACCOUNT, USER_EMAIL, get_access_token
+from curp import CURP as CURPSuite, CURPValueError
 
 # ── validador de CURP (sin dependencia externa) ───────────────────────────────
 _ESTADOS = (
@@ -70,6 +72,7 @@ DESTINO_FIELDNAMES = [
     "CORREO_ELECTRONICO", "GRUPO",
 ]
 ERROR_FIELDNAMES = ["plantel", "nombre", "paterno", "materno", "matricula", "curp", "error"]
+WARNING_FIELDNAMES = ["plantel", "nombre", "paterno", "materno", "matricula", "curp", "warning"]
 
 # ── CCT → nombre oficial de plantel ───────────────────────────────────────────
 CLAVE_PLANTEL: dict[str, str] = {
@@ -260,6 +263,15 @@ def validar_curp(curp: str, nombre: str, paterno: str, materno: str) -> str:
     return curp
 
 
+def validar_curp_estructura(curp: str) -> tuple[bool, str]:
+    """Valida estructura de CURP con CURPSuite (formato, fecha, dígito verificador, estado)."""
+    try:
+        CURPSuite(curp.strip().upper())
+        return True, ""
+    except CURPValueError as exc:
+        return False, str(exc)
+
+
 def validar_matricula(mat: str) -> str:
     if len(mat) != 14:
         raise ValueError(f"Matrícula debe tener 14 chars, tiene {len(mat)}: '{mat}'")
@@ -406,6 +418,7 @@ def procesar_enrollment(
     cruce_por_cct: dict,
     cruce_por_plan: dict,
     raw_curp: str,
+    skip_curp_validation: bool = False,
 ) -> dict:
     student = enr.get("student") or {}
 
@@ -415,11 +428,16 @@ def procesar_enrollment(
     materno = corregir_acentos(surnames[1] if len(surnames) > 1 else "")
 
     matricula = validar_matricula((student.get("student_id") or "").strip())
-    curp = validar_curp(raw_curp, nombre, paterno, materno)
+    curp = raw_curp.strip().upper() if skip_curp_validation else validar_curp(raw_curp, nombre, paterno, materno)
     genero = obtener_genero(student.get("gender") or "")
 
     raw_email = (student.get("email") or "").strip()
-    email = raw_email if validate_email(raw_email) else f"{matricula}@cecytem.edu.mx"
+    if _EMAIL_RE.match(raw_email) and len(raw_email) <= 64:
+        email = raw_email
+    elif len(raw_email) > 64:
+        email = "michoacan@cecytem.edu.mx"
+    else:
+        email = f"{matricula}@cecytem.edu.mx"
 
     carrera = buscar_carrera(school_cct, enr.get("program_name") or "", cruce_por_cct, cruce_por_plan)
     cct = school_cct.upper()
@@ -468,6 +486,43 @@ def _eliminar_checkpoint() -> None:
         CHECKPOINT_FILE.unlink()
 
 
+# ── CSV → Excel particionado ──────────────────────────────────────────────────
+
+def csv_a_excel_particionado(csv_path: Path, n_partes: int = 10) -> Path:
+    """Lee el CSV de carga y lo divide en *n_partes* archivos .xlsx con encabezados."""
+    import openpyxl
+
+    with open(csv_path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f, fieldnames=DESTINO_FIELDNAMES)
+        rows = list(reader)
+
+    if not rows:
+        log.warning("CSV de carga vacío, no se generan archivos Excel.")
+        return csv_path.parent
+
+    carpeta = csv_path.parent / csv_path.stem
+    carpeta.mkdir(parents=True, exist_ok=True)
+
+    chunk_size = math.ceil(len(rows) / n_partes)
+
+    for i in range(n_partes):
+        chunk = rows[i * chunk_size : (i + 1) * chunk_size]
+        if not chunk:
+            break
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "myFile"
+        ws.append(DESTINO_FIELDNAMES)
+        for row in chunk:
+            ws.append([row[col] for col in DESTINO_FIELDNAMES])
+        nombre_archivo = carpeta / f"{csv_path.stem} parte {i + 1}.xlsx"
+        wb.save(nombre_archivo)
+        log.info("  Excel %d/%d: %s (%d filas)", i + 1, n_partes, nombre_archivo.name, len(chunk))
+
+    log.info("Archivos Excel guardados en: %s", carpeta)
+    return carpeta
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -486,6 +541,7 @@ def main() -> None:
             processed_ids: set[int] = set(checkpoint["processed_ids"])
             carga_path = Path(checkpoint["carga_path"])
             errores_path = Path(checkpoint["errores_path"])
+            warnings_path = RESULTADO_DIR / f"warnings {timestamp}.csv"
             log.info("Reanudando desde %d planteles ya procesados.", len(processed_ids))
         else:
             _eliminar_checkpoint()
@@ -493,11 +549,13 @@ def main() -> None:
             processed_ids = set()
             carga_path = RESULTADO_DIR / f"carga {timestamp}.csv"
             errores_path = RESULTADO_DIR / f"errores {timestamp}.csv"
+            warnings_path = RESULTADO_DIR / f"warnings {timestamp}.csv"
     else:
         timestamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
         processed_ids = set()
         carga_path = RESULTADO_DIR / f"carga {timestamp}.csv"
         errores_path = RESULTADO_DIR / f"errores {timestamp}.csv"
+        warnings_path = RESULTADO_DIR / f"warnings {timestamp}.csv"
 
     log.info("Autenticando con Saeko…")
     token = get_access_token(SERVICE_ACCOUNT, USER_EMAIL)["access_token"]
@@ -511,6 +569,7 @@ def main() -> None:
 
     total_ok = 0
     total_err = 0
+    total_warn = 0
 
     bar_schools = tqdm(pending, desc="Planteles", unit="plantel", colour="cyan")
     for school in bar_schools:
@@ -532,6 +591,7 @@ def main() -> None:
 
         resultados_plantel: list[dict] = []
         errores_plantel: list[dict] = []
+        warnings_plantel: list[dict] = []
 
         bar_alumnos = tqdm(
             enrollments,
@@ -556,11 +616,49 @@ def main() -> None:
                     except Exception:
                         raw_curp = ""
 
-            try:
-                resultados_plantel.append(
-                    procesar_enrollment(enr, school_cct, cruce_por_cct, cruce_por_plan, raw_curp)
-                )
-            except Exception as exc:
+            # ── Validación dual: CURPSuite (estructura) + validar_curp (nombres) ──
+            suite_ok, suite_err = validar_curp_estructura(raw_curp)
+
+            if suite_ok:
+                # CURPSuite aprueba estructura → intento normal (con validación de nombres)
+                try:
+                    resultados_plantel.append(
+                        procesar_enrollment(enr, school_cct, cruce_por_cct, cruce_por_plan, raw_curp)
+                    )
+                except Exception as exc:
+                    # Falló validar_curp u otro → reintentar sin validar CURP
+                    try:
+                        resultados_plantel.append(
+                            procesar_enrollment(
+                                enr, school_cct, cruce_por_cct, cruce_por_plan, raw_curp,
+                                skip_curp_validation=True,
+                            )
+                        )
+                        # Caso 1: CURPSuite ok, validar_curp falló → carga + warning
+                        warnings_plantel.append({
+                            "plantel": school_name,
+                            "nombre": nombre,
+                            "paterno": surnames[0] if len(surnames) > 0 else "",
+                            "materno": surnames[1] if len(surnames) > 1 else "",
+                            "matricula": (student.get("student_id") or "").strip(),
+                            "curp": raw_curp,
+                            "warning": str(exc),
+                        })
+                        tqdm.write(f"[WARN] {surnames[0] if surnames else ''} {nombre}: {exc}")
+                    except Exception as exc2:
+                        # Error no relacionado con CURP (matrícula, género, carrera)
+                        errores_plantel.append({
+                            "plantel": school_name,
+                            "nombre": nombre,
+                            "paterno": surnames[0] if len(surnames) > 0 else "",
+                            "materno": surnames[1] if len(surnames) > 1 else "",
+                            "matricula": (student.get("student_id") or "").strip(),
+                            "curp": raw_curp,
+                            "error": str(exc2),
+                        })
+                        tqdm.write(f"[ERROR] {surnames[0] if surnames else ''} {nombre}: {exc2}")
+            else:
+                # Casos 2 y 3: CURPSuite falla → error
                 errores_plantel.append({
                     "plantel": school_name,
                     "nombre": nombre,
@@ -568,33 +666,41 @@ def main() -> None:
                     "materno": surnames[1] if len(surnames) > 1 else "",
                     "matricula": (student.get("student_id") or "").strip(),
                     "curp": raw_curp,
-                    "error": str(exc),
+                    "error": f"[CURPSuite] {suite_err}",
                 })
-                tqdm.write(f"[ERROR] {surnames[0] if surnames else ''} {nombre}: {exc}")
+                tqdm.write(f"[ERROR] {surnames[0] if surnames else ''} {nombre}: [CURPSuite] {suite_err}")
 
         # Guardar resultados del plantel y actualizar checkpoint
         write_csv_rows(carga_path, resultados_plantel, DESTINO_FIELDNAMES)
         write_csv_rows(errores_path, errores_plantel, ERROR_FIELDNAMES)
+        write_csv_rows(warnings_path, warnings_plantel, WARNING_FIELDNAMES)
         processed_ids.add(school_id)
         _guardar_checkpoint(timestamp, processed_ids, carga_path, errores_path)
 
         obtenidos = len(enrollments)
         ok_plantel = len(resultados_plantel)
         err_plantel = len(errores_plantel)
+        warn_plantel = len(warnings_plantel)
         total_ok += ok_plantel
         total_err += err_plantel
+        total_warn += warn_plantel
         tqdm.write(
             f"  ✓ {school_name}: {obtenidos} obtenidos | "
-            f"{ok_plantel} ok, {err_plantel} errores  "
-            f"(acumulado: {total_ok} ok / {total_err} errores)"
+            f"{ok_plantel} ok, {err_plantel} errores, {warn_plantel} warnings  "
+            f"(acumulado: {total_ok} ok / {total_err} errores / {total_warn} warnings)"
         )
 
     _eliminar_checkpoint()
     print(f"\nFinalizado {timestamp}")
     print(f"  Procesados : {total_ok}")
+    print(f"  Warnings   : {total_warn}")
     print(f"  Errores    : {total_err}")
     if total_ok:
-        print(f"  Carga      : {carga_path}")
+        print(f"  Carga CSV  : {carga_path}")
+        carpeta_excel = csv_a_excel_particionado(carga_path)
+        print(f"  Carga Excel: {carpeta_excel}")
+    if total_warn:
+        print(f"  Warnings   : {warnings_path}")
     if total_err:
         print(f"  Errores    : {errores_path}")
 
