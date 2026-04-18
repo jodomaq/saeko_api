@@ -4,3 +4,7 @@ cryptography
 python-dotenv
 openpyxl
 reportlab
+beautifulsoup4
+tqdm
+validate-email
+requests

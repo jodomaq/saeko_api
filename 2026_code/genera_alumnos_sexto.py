@@ -44,7 +44,13 @@ _CURP_RE = re.compile(
     r"[A-Z0-9]\d$"
 )
 # Nombres compuestos que Saeko a veces registra como primer nombre
-_NOMBRES_COMPUESTOS = {"JOSE", "MARIA", "MA", "J"}
+_NOMBRES_COMPUESTOS = {"JOSE", "MARIA", "MA", "MA.", "J", "J."}
+
+# Prefijos que el RENAPO ignora al calcular las iniciales de la CURP
+_PREFIJOS_APELLIDO = {"DE", "LA", "EL", "DEL", "LOS", "LAS", "DE LA", "DE LOS", "DE LAS", "J"}
+_PREFIJOS_NOMBRE   = _NOMBRES_COMPUESTOS | {"DEL", "DE", "LA", "LOS", "LAS",
+                                             "DE LA", "DE LOS", "DE LAS",
+                                             "MA DE LOS", "MA DE LA", "MA DEL"}
 
 # ── constantes ────────────────────────────────────────────────────────────────
 COLEGIO = "Michoacán"
@@ -183,6 +189,32 @@ def corregir_acentos(s: str) -> str:
     return s.translate(tabla).strip()
 
 
+def _inicial_real(texto: str, prefijos: set[str]) -> str:
+    """Devuelve la primera letra significativa ignorando prefijos (DE, LA, DEL …).
+
+    Soporta prefijos multi-palabra como "MA. DE LOS": intenta consumir la
+    secuencia más larga de palabras que formen un prefijo conocido antes de
+    tomar la primera letra del resto.
+    """
+    # Separar prefijos pegados con punto: "J.Lucas" → "J." + "Lucas"
+    texto_prep = re.sub(r'\.(?=[A-Za-zÁÉÍÓÚáéíóúÑñ])', '. ', texto)
+    palabras = normalizar(texto_prep).upper().split()
+    i = 0
+    while i < len(palabras):
+        # intentar prefijo de 3, 2 y 1 palabra(s)
+        matched = False
+        for n in (3, 2, 1):
+            if i + n <= len(palabras):
+                candidato = " ".join(p.rstrip(".") for p in palabras[i:i + n])
+                if candidato in prefijos:
+                    i += n
+                    matched = True
+                    break
+        if not matched:
+            return palabras[i][0]
+    return palabras[0][0] if palabras else ""
+
+
 # ── validaciones ──────────────────────────────────────────────────────────────
 
 _GENERO_MAP: dict[str, str] = {
@@ -212,19 +244,19 @@ def validar_curp(curp: str, nombre: str, paterno: str, materno: str) -> str:
         date(yyyy, mm, dd)
     except ValueError:
         raise ValueError(f"Fecha inválida en CURP: {curp[4:10]} | curp='{curp}'")
-    # Validar inicial del primer apellido
-    pat = normalizar(paterno).upper()
-    if pat and curp[0] != pat[0]:
-        raise ValueError(f"Inicial CURP ({curp[0]}) no coincide con apellido paterno ({pat[0]}) | curp='{curp}'")
+    # Validar inicial del primer apellido (ignorando prefijos: De la, Del …)
+    ini_pat = _inicial_real(paterno, _PREFIJOS_APELLIDO)
+    if ini_pat and curp[0] != ini_pat:
+        raise ValueError(f"Inicial CURP ({curp[0]}) no coincide con apellido paterno ({ini_pat}) | curp='{curp}'")
     # Para nacidos en el extranjero (NE) puede haber un solo apellido — omitir validación de materno
     nacido_extranjero = m["edo"] == "NE"
-    mat = normalizar(materno).upper()
-    if mat and not nacido_extranjero and curp[2] != "X" and curp[2] != mat[0]:
-        raise ValueError(f"Inicial CURP ({curp[2]}) no coincide con apellido materno ({mat[0]}) | curp='{curp}'")
-    # Validar inicial del primer nombre (omitir nombres compuestos comunes)
-    nom = normalizar(nombre).upper().split()[0] if nombre.strip() else ""
-    if nom and nom not in _NOMBRES_COMPUESTOS and curp[3] != nom[0]:
-        raise ValueError(f"Inicial CURP ({curp[3]}) no coincide con nombre ({nom[0]}) | curp='{curp}'")
+    ini_mat = _inicial_real(materno, _PREFIJOS_APELLIDO)
+    if ini_mat and not nacido_extranjero and curp[2] != "X" and curp[2] != ini_mat:
+        raise ValueError(f"Inicial CURP ({curp[2]}) no coincide con apellido materno ({ini_mat}) | curp='{curp}'")
+    # Validar inicial del primer nombre (ignorando Ma., José, etc.)
+    ini_nom = _inicial_real(nombre, _PREFIJOS_NOMBRE)
+    if ini_nom and curp[3] != ini_nom:
+        raise ValueError(f"Inicial CURP ({curp[3]}) no coincide con nombre ({ini_nom}) | curp='{curp}'")
     return curp
 
 
@@ -350,7 +382,7 @@ def get_enrollments_grade6(
 
         if not batch:
             break
-        offset += API_LIMIT
+        offset += len(batch)
         page += 1
         if total_reported is not None and len(enrollments) >= total_reported:
             break
