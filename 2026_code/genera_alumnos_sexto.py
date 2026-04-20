@@ -52,7 +52,8 @@ _NOMBRES_COMPUESTOS = {"JOSE", "MARIA", "MA", "MA.", "J", "J."}
 _PREFIJOS_APELLIDO = {"DE", "LA", "EL", "DEL", "LOS", "LAS", "DE LA", "DE LOS", "DE LAS", "J"}
 _PREFIJOS_NOMBRE   = _NOMBRES_COMPUESTOS | {"DEL", "DE", "LA", "LOS", "LAS",
                                              "DE LA", "DE LOS", "DE LAS",
-                                             "MA DE LOS", "MA DE LA", "MA DEL"}
+                                             "MA DE LOS", "MA DE LA", "MA DEL",
+                                             "MA. DE LOS", "MA. DE LA", "MA. DEL"}
 
 # ── constantes ────────────────────────────────────────────────────────────────
 COLEGIO = "Michoacán"
@@ -446,7 +447,8 @@ def procesar_enrollment(
         "COLEGIO": COLEGIO,
         "CCT": cct,
         "NOMBRE_DE_PLANTEL": CLAVE_PLANTEL.get(cct, enr.get("school_name", cct)),
-        "TURNO": enr.get("group_shift") or "",
+        "TURNO": {"1": "MATUTINO", "2": "VESPERTINO", "3": "NOCTURNO"}.get(str(enr.get("group_shift") or ""), "MATUTINO"),
+
         "VERSION_CARRERA": VERSION_CARRERA,
         "CLAVE_CARRERA": carrera["clave"],
         "NOMBRE_CARRERA": carrera["nombre"],
