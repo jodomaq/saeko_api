@@ -279,6 +279,18 @@ def validar_matricula(mat: str) -> str:
     return mat
 
 
+_CHARS_NOMBRE_RE = re.compile(r"[^A-ZÁÉÍÓÚÑa-záéíóúñ. ]")
+
+
+def _advertencias_nombre(nombre: str, paterno: str, materno: str) -> list[str]:
+    warns = []
+    for campo, valor in (("nombre", nombre), ("paterno", paterno), ("materno", materno)):
+        m = _CHARS_NOMBRE_RE.search(valor)
+        if m:
+            warns.append(f"Carácter inválido en {campo}: '{m.group()}' en '{valor}'")
+    return warns
+
+
 # ── tabla de cruce de carreras ────────────────────────────────────────────────
 
 def cargar_cruce_carreras(
@@ -443,11 +455,28 @@ def procesar_enrollment(
     carrera = buscar_carrera(school_cct, enr.get("program_name") or "", cruce_por_cct, cruce_por_plan)
     cct = school_cct.upper()
 
+    # Planteles externos EXT25: reasignar CCT y nombre según carrera
+    if cct == "EXT25":
+        _nombre_carrera = carrera["nombre"]
+        if _nombre_carrera == "Ecoturismo":
+            cct = "16ETC0026P"
+            nombre_plantel = "CECYTE MICHOACÁN 26 COLOLA"
+        elif _nombre_carrera == "Producción industrial de alimentos":
+            cct = "16ETC0028N"
+            nombre_plantel = "CECYTE MICHOACÁN 25 OPOPEO"
+        elif _nombre_carrera == "Programación":
+            cct = "16ETC0020V"
+            nombre_plantel = "CECYTE MICHOACÁN 20 URUAPAN"
+        else:
+            nombre_plantel = CLAVE_PLANTEL.get(cct, enr.get("school_name", cct))
+    else:
+        nombre_plantel = CLAVE_PLANTEL.get(cct, enr.get("school_name", cct))
+
     return {
         "COLEGIO": COLEGIO,
         "CCT": cct,
-        "NOMBRE_DE_PLANTEL": CLAVE_PLANTEL.get(cct, enr.get("school_name", cct)),
-        "TURNO": {"1": "MATUTINO", "2": "VESPERTINO", "3": "NOCTURNO"}.get(str(enr.get("group_shift") or ""), "MATUTINO"),
+        "NOMBRE_DE_PLANTEL": nombre_plantel,
+        "TURNO": {"1": "MATUTINO", "2": "VESPERTINO"}.get(str(enr.get("group_shift") or ""), "MATUTINO"),
 
         "VERSION_CARRERA": VERSION_CARRERA,
         "CLAVE_CARRERA": carrera["clave"],
@@ -627,6 +656,21 @@ def main() -> None:
                     resultados_plantel.append(
                         procesar_enrollment(enr, school_cct, cruce_por_cct, cruce_por_plan, raw_curp)
                     )
+                    for _w in _advertencias_nombre(
+                        nombre,
+                        surnames[0] if len(surnames) > 0 else "",
+                        surnames[1] if len(surnames) > 1 else "",
+                    ):
+                        warnings_plantel.append({
+                            "plantel": school_name,
+                            "nombre": nombre,
+                            "paterno": surnames[0] if len(surnames) > 0 else "",
+                            "materno": surnames[1] if len(surnames) > 1 else "",
+                            "matricula": (student.get("student_id") or "").strip(),
+                            "curp": raw_curp,
+                            "warning": _w,
+                        })
+                        tqdm.write(f"[WARN] {surnames[0] if surnames else ''} {nombre}: {_w}")
                 except Exception as exc:
                     # Falló validar_curp u otro → reintentar sin validar CURP
                     try:
@@ -647,6 +691,21 @@ def main() -> None:
                             "warning": str(exc),
                         })
                         tqdm.write(f"[WARN] {surnames[0] if surnames else ''} {nombre}: {exc}")
+                        for _w in _advertencias_nombre(
+                            nombre,
+                            surnames[0] if len(surnames) > 0 else "",
+                            surnames[1] if len(surnames) > 1 else "",
+                        ):
+                            warnings_plantel.append({
+                                "plantel": school_name,
+                                "nombre": nombre,
+                                "paterno": surnames[0] if len(surnames) > 0 else "",
+                                "materno": surnames[1] if len(surnames) > 1 else "",
+                                "matricula": (student.get("student_id") or "").strip(),
+                                "curp": raw_curp,
+                                "warning": _w,
+                            })
+                            tqdm.write(f"[WARN] {surnames[0] if surnames else ''} {nombre}: {_w}")
                     except Exception as exc2:
                         # Error no relacionado con CURP (matrícula, género, carrera)
                         errores_plantel.append({
